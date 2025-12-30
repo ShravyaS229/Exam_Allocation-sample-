@@ -5,8 +5,9 @@
             "type": "java",
             "name": "Launch AdminPage",
             "request": "launch",
-            "mainClass": "src.backend.AdminPage",
-            "vmArgs": "--module-path \"C:/Users/Shravya/Downloads/openjfx-25.0.1_windows-x64_bin-sdk (1)/javafx-sdk-25.0.1/lib\" --add-modules javafx.controls,javafx.fxml"
+            "mainClass": "src.frontend.AdminPage",
+            "projectName": "FacultyAllocation",
+            "vmArgs": "--module-path \"${workspaceFolder}/lib/javafx-sdk-21/lib\" --add-modules javafx.controls,javafx.fxml"
         }
     ]
 }

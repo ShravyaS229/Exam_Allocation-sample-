@@ -1,148 +1,98 @@
 package src.backend;
 
-import src.dao.*;
-import src.models.*;
+import src.dao.FacultyDAO;
+import src.dao.RoomDAO;
+import src.dao.SlotDAO;
+import src.dao.SubjectDAO;
+import src.models.Faculty;
+import src.models.Room;
+import src.models.Slot;
+import src.models.Subject;
+import src.DBConnection;
 
-import java.time.LocalTime;
-import java.time.format.DateTimeFormatter;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.util.*;
 
 public class AllocationLogic {
 
-    private final SlotDAO slotDAO = new SlotDAO();
-    private final SubjectDAO subjectDAO = new SubjectDAO();
-    private final RoomDAO roomDAO = new RoomDAO();
-    private final FacultyDAO facultyDAO = new FacultyDAO();
-    private final AllocationDAO allocationDAO = new AllocationDAO();
+    private FacultyDAO facultyDAO = new FacultyDAO();
+    private RoomDAO roomDAO = new RoomDAO();
+    private SlotDAO slotDAO = new SlotDAO();
+    private SubjectDAO subjectDAO = new SubjectDAO();
 
-    // Tracks faculty assignments per day
-    private final Map<String, Map<Integer, Integer>> facultyDailySlots = new HashMap<>();
-    // Key: Date, Value: Map<FacultyId, slots assigned today>
-
-    public void generateAllocation() {
-
-        List<Slot> slots = slotDAO.getAllSlots();
+    public void generateAllocation(String semester) {
+        List<Faculty> faculties = facultyDAO.getAllFaculties();
         List<Room> rooms = roomDAO.getAllRooms();
-        List<Faculty> allFaculty = facultyDAO.getAllFaculty();
+        List<Slot> slots = slotDAO.getSlotsBySemester(semester);
+        List<Subject> subjects = subjectDAO.getSubjectsBySemester(semester);
 
-        // Filter eligible faculty (Assistant + Associate only)
-        List<Faculty> assistants = new ArrayList<>();
-        List<Faculty> associates = new ArrayList<>();
-        for (Faculty f : allFaculty) {
-            String d = f.getDesignation();
-            if (d.contains("Assistant")) assistants.add(f);
-            else if (d.contains("Associate")) associates.add(f);
+        if(subjects.isEmpty() || slots.isEmpty()) {
+            System.out.println("No slots or subjects available for semester " + semester);
+            return;
         }
 
-        // Reduce room count if needed
-        int totalRooms = Math.min(rooms.size(), assistants.size() + associates.size());
-        rooms = rooms.subList(0, totalRooms);
+        Map<String, Boolean> facultyAssigned = new HashMap<>();
 
-        // Sort slots by date & start time
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("h.mm a");
-        slots.sort(Comparator
-                .comparing(Slot::getExamDate)
-                .thenComparing(s -> LocalTime.parse(s.getTime().split(" - ")[0], formatter)));
+        for (Faculty f : faculties) {
+            facultyAssigned.put(f.getName(), false);
+        }
 
         int roomIndex = 0;
-        int assistantIndex = 0;
-        int associateIndex = 0;
+        int facultyIndex = 0;
+        int subjectIndex = 0;
 
-        System.out.println("Room | Date | Time | Subject | Faculty");
-        System.out.println("---------------------------------------------------");
+        try (Connection conn = DBConnection.getConnection()) {
+            String insertQuery = "INSERT INTO allocation_result (exam_date, time, room_no, semester, subject, faculty_name, designation) VALUES (?, ?, ?, ?, ?, ?, ?)";
 
-        for (Slot slot : slots) {
-            List<Subject> subjects = subjectDAO.getSubjectsBySemester(slot.getSemester());
-            if (subjects.isEmpty()) continue;
+            for (Slot slot : slots) {
+                for (Room room : rooms) {
+                    if(subjectIndex >= subjects.size()) subjectIndex = 0;
 
-            // Ensure every room is used
-            for (int i = 0; i < rooms.size(); i++) {
-                Room room = rooms.get(roomIndex % rooms.size());
-                roomIndex++;
+                    Subject subject = subjects.get(subjectIndex);
 
-                // Cycle subjects if fewer subjects than rooms
-                Subject subject = subjects.get(i % subjects.size());
-
-                Faculty assignedFaculty = null;
-                String date = slot.getExamDate();
-
-                // Assign Assistant (max 2 slots/day)
-                int attempts = 0;
-                while (assignedFaculty == null && attempts < assistants.size()) {
-                    Faculty candidate = assistants.get(assistantIndex % assistants.size());
-                    int assigned = facultyDailySlots
-                            .getOrDefault(date, new HashMap<>())
-                            .getOrDefault(candidate.getFacultyId(), 0);
-                    if (assigned < 2) {
-                        assignedFaculty = candidate;
-                        assistantIndex++;
-                        facultyDailySlots.computeIfAbsent(date, k -> new HashMap<>())
-                                .put(candidate.getFacultyId(), assigned + 1);
-                    } else {
-                        assistantIndex++;
-                        attempts++;
+                    // Find next available faculty
+                    Faculty assignedFaculty = null;
+                    for(int i=0; i<faculties.size(); i++){
+                        Faculty f = faculties.get(facultyIndex % faculties.size());
+                        facultyIndex++;
+                        if(!facultyAssigned.get(f.getName())) {
+                            assignedFaculty = f;
+                            facultyAssigned.put(f.getName(), true);
+                            break;
+                        }
                     }
+
+                    if(assignedFaculty == null){
+                        System.out.println("Not enough faculties available for subject: " + subject.getName());
+                        continue;
+                    }
+
+                    // Insert allocation
+                    try (PreparedStatement ps = conn.prepareStatement(insertQuery)) {
+                        ps.setString(1, slot.getExamDate());
+                        ps.setString(2, slot.getTime());
+                        ps.setInt(3, room.getRoomNo());
+                        ps.setString(4, semester);
+                        ps.setString(5, subject.getName());
+                        ps.setString(6, assignedFaculty.getName());
+                        ps.setString(7, assignedFaculty.getDesignation());
+                        ps.executeUpdate();
+                    }
+
+                    subjectIndex++;
                 }
 
-                // Assign Associate (max 1 slot/day) if no Assistant available
-                attempts = 0;
-                while (assignedFaculty == null && attempts < associates.size()) {
-                    Faculty candidate = associates.get(associateIndex % associates.size());
-                    int assigned = facultyDailySlots
-                            .getOrDefault(date, new HashMap<>())
-                            .getOrDefault(candidate.getFacultyId(), 0);
-                    if (assigned < 1) {
-                        assignedFaculty = candidate;
-                        associateIndex++;
-                        facultyDailySlots.computeIfAbsent(date, k -> new HashMap<>())
-                                .put(candidate.getFacultyId(), assigned + 1);
-                    } else {
-                        associateIndex++;
-                        attempts++;
-                    }
+                // Reset faculty availability for next slot
+                for (Faculty f : faculties) {
+                    facultyAssigned.put(f.getName(), false);
                 }
-
-                if (assignedFaculty == null) {
-                    // Force assign anyone if still null (to avoid empty rooms)
-                    if (!assistants.isEmpty()) {
-                        assignedFaculty = assistants.get(assistantIndex % assistants.size());
-                        assistantIndex++;
-                        facultyDailySlots.computeIfAbsent(date, k -> new HashMap<>())
-                                .put(assignedFaculty.getFacultyId(),
-                                        facultyDailySlots.getOrDefault(date, new HashMap<>())
-                                                .getOrDefault(assignedFaculty.getFacultyId(), 0) + 1);
-                    } else if (!associates.isEmpty()) {
-                        assignedFaculty = associates.get(associateIndex % associates.size());
-                        associateIndex++;
-                        facultyDailySlots.computeIfAbsent(date, k -> new HashMap<>())
-                                .put(assignedFaculty.getFacultyId(),
-                                        facultyDailySlots.getOrDefault(date, new HashMap<>())
-                                                .getOrDefault(assignedFaculty.getFacultyId(), 0) + 1);
-                    }
-                }
-
-                AllocationResult ar = new AllocationResult(
-                        slot.getExamDate(),
-                        slot.getTime(),
-                        room.getRoomNo(),
-                        slot.getSemester(),
-                        subject.getName(),
-                        assignedFaculty.getName(),
-                        assignedFaculty.getDesignation()
-                );
-
-                allocationDAO.saveAllocation(ar);
-
-                System.out.printf("%3d | %s | %s | %s | %s%n",
-                        room.getRoomNo(),
-                        slot.getExamDate(),
-                        slot.getTime(),
-                        subject.getName(),
-                        assignedFaculty.getName());
             }
+        } catch (SQLException e) {
+            e.printStackTrace();
         }
 
-        System.out.println("---------------------------------------------------");
-        System.out.println("All rooms allocated with no empty halls.");
+        System.out.println("Allocation completed for semester " + semester);
     }
 }

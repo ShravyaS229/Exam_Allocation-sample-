@@ -1,27 +1,30 @@
 package src.dao;
 
 import src.models.Room;
-import java.sql.*;
-import java.util.*;
 import src.DBConnection;
+
+import java.sql.*;
+import java.util.ArrayList;
+import java.util.List;
+
 public class RoomDAO {
-
     public List<Room> getAllRooms() {
-        List<Room> list = new ArrayList<>();
+        List<Room> rooms = new ArrayList<>();
+        String query = "SELECT * FROM rooms ORDER BY room_no";
 
-        // ✅ correct table name: rooms
-        String sql = "SELECT room_no FROM rooms";
-
-        try (Connection con = DBConnection.getConnection();
-             Statement st = con.createStatement();
-             ResultSet rs = st.executeQuery(sql)) {
+        try (Connection conn = DBConnection.getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(query)) {
 
             while (rs.next()) {
-                list.add(new Room(rs.getInt("room_no")));
+                rooms.add(new Room(
+                        rs.getInt("room_no"),
+                        rs.getInt("capacity")
+                ));
             }
-        } catch (Exception e) {
+        } catch (SQLException e) {
             e.printStackTrace();
         }
-        return list;
+        return rooms;
     }
 }

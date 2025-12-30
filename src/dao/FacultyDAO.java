@@ -1,29 +1,51 @@
 package src.dao;
 
 import src.models.Faculty;
-import java.sql.*;
-import java.util.*;
 import src.DBConnection;
+
+import java.sql.*;
+import java.util.ArrayList;
+import java.util.List;
+
 public class FacultyDAO {
 
-    public List<Faculty> getAllFaculty() {
-        List<Faculty> list = new ArrayList<>();
-        String sql = "SELECT faculty_id, name, designation FROM faculty";
+    // Get all faculties
+    public List<Faculty> getAllFaculties() {
+        List<Faculty> faculties = new ArrayList<>();
+        String query = "SELECT * FROM faculty";
 
-        try (Connection con = DBConnection.getConnection();
-             Statement st = con.createStatement();
-             ResultSet rs = st.executeQuery(sql)) {
+        try (Connection conn = DBConnection.getConnection();
+             Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery(query)) {
 
             while (rs.next()) {
-                list.add(new Faculty(
+                faculties.add(new Faculty(
                         rs.getInt("faculty_id"),
                         rs.getString("name"),
-                        rs.getString("designation")
+                        rs.getString("designation"),
+                        rs.getBoolean("is_senior"),
+                        rs.getBoolean("is_absent")
                 ));
             }
-        } catch (Exception e) {
+        } catch (SQLException e) {
             e.printStackTrace();
         }
-        return list;
+        return faculties;
+    }
+
+    // Mark a faculty absent or present
+    public void markAbsent(int facultyId, boolean absent) {
+        String query = "UPDATE faculty SET is_absent = ? WHERE faculty_id = ?";
+
+        try (Connection conn = DBConnection.getConnection();
+             PreparedStatement pstmt = conn.prepareStatement(query)) {
+
+            pstmt.setBoolean(1, absent);
+            pstmt.setInt(2, facultyId);
+            pstmt.executeUpdate();
+
+        } catch (SQLException e) {
+            e.printStackTrace();
+        }
     }
 }
